@@ -52,7 +52,6 @@ html,body{margin:0;height:100%;font-family:-apple-system,Arial,sans-serif;-webki
   </div>
   <div id="panelBody">
     <div class="row"><input type="text" id="q" list="spots" placeholder="&#128269; find a spot..."></div>
-    <div class="row"><input type="text" id="rt" list="spots" placeholder="&#128736; route from Coecles to..."></div>
     <datalist id="spots"></datalist>
     <div class="row">
       Speed <input type="number" id="spd" value="30"> mph
@@ -255,24 +254,6 @@ L.polyline(WPS.map(function(w){return [w.lat,w.lon];}),{color:'#7a4b00',weight:2
 corridor.addTo(map);
 
 var routeLayer=L.layerGroup().addTo(map);
-function routeFromCoecles(name){
-  var m=markerByName[name]; if(!m)return;
-  routeLayer.clearLayers();
-  var dest=m.getLatLng();
-  var exitIdx=dest.lat>=41.04?10:11;
-  var path=WPS.slice(0,exitIdx+1).map(function(w){return L.latLng(w.lat,w.lon);});
-  path.push(dest);
-  var total=0; for(var i=1;i<path.length;i++)total+=nmDist(path[i-1],path[i]);
-  L.polyline(path,{color:'#0a7d33',weight:4,opacity:.85}).addTo(routeLayer);
-  path.forEach(function(p){L.circleMarker(p,{radius:3,color:'#0a7d33',fillColor:'#fff',fillOpacity:1,weight:2}).addTo(routeLayer);});
-  var spd=parseFloat(document.getElementById('spd').value)||30;
-  var hrs=total*1.15078/spd,h=Math.floor(hrs),mn=Math.round((hrs-h)*60);
-  var via=exitIdx===10?'via S. Gardiners (no pt rounding)':'via S. Gardiners, around Montauk Pt';
-  document.getElementById('readout').innerHTML=
-    '<b>Coecles &rarr; '+name+'</b><br>'+total.toFixed(1)+' NM ('+(total*1.15078).toFixed(1)+' mi) &nbsp; '+via+'<br>~'+h+'h '+mn+'m at '+spd+' mph';
-  map.fitBounds(L.latLngBounds(path),{padding:[45,45]});
-}
-document.getElementById('rt').addEventListener('change',function(){routeFromCoecles(this.value);});
 
 // ---- search ----
 var dl=document.getElementById('spots');
@@ -428,7 +409,7 @@ function coeclesNM(dest){
   var t=0; for(var i=1;i<path.length;i++)t+=nmDist(path[i-1],path[i]);
   return {nm:t, path:path, via:exitIdx===10?'via S. Gardiners (no pt rounding)':'via S. Gardiners, around Montauk Pt'};
 }
-function calcUpdate(){
+function calcUpdate(zoom){
   var an=document.getElementById('calcA').value, bn=document.getElementById('calcB').value;
   var A=markerByName[an], B=markerByName[bn], out=document.getElementById('calcOut');
   calcLayer.clearLayers();
@@ -443,10 +424,12 @@ function calcUpdate(){
   L.polyline(path,{color:'#8e44ad',weight:3,dashArray:'2 7'}).addTo(calcLayer);
   out.innerHTML='<b>'+nm.toFixed(1)+' NM ('+(nm*1.15078).toFixed(1)+' mi)</b> '+via+
     '<br>brg '+Math.round(brg).toString().padStart(3,'0')+'&deg;T (direct) &nbsp; ~'+h+'h '+mn+'m at '+spd+' mph';
+  if(zoom!==false)map.fitBounds(L.latLngBounds(path),{padding:[45,45]});
 }
-['calcA','calcB','spd'].forEach(function(id){
+['calcA','calcB'].forEach(function(id){
   document.getElementById(id).addEventListener('change',calcUpdate);
 });
+document.getElementById('spd').addEventListener('change',function(){calcUpdate(false);});
 
 // ---- layers control + labels + collapse ----
 L.control.layers(
