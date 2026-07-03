@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>Montauk / Block Island Fishing Chart</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fishing Chart">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>window.L||document.write('<scr'+'ipt src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/scr'+'ipt>')</script>
+<style>
+html,body{margin:0;height:100%;font-family:-apple-system,Arial,sans-serif;-webkit-text-size-adjust:100%}
+#map{height:100%}
+.lbl{background:rgba(255,255,255,.88);border:1px solid #888;border-radius:3px;
+ padding:0 3px;font-size:10px;font-weight:bold;color:#1F4E79;white-space:nowrap}
+.ringlbl{background:none;border:none;box-shadow:none;font-size:11px;font-weight:bold;color:#7a4b00}
+.panel{position:absolute;top:8px;left:8px;right:56px;z-index:1000;background:rgba(255,255,255,.96);
+ padding:9px 11px;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.35);font-size:13px;max-width:330px}
+.panel b{color:#1F4E79}
+.panel .row{margin-top:6px}
+.panel input[type=text]{width:100%;padding:7px;font-size:15px;box-sizing:border-box;border:1px solid #aaa;border-radius:6px}
+.panel input[type=number]{width:58px;padding:6px;font-size:15px;border:1px solid #aaa;border-radius:6px}
+.panel input[type=date]{padding:5px;font-size:14px;border:1px solid #aaa;border-radius:6px}
+.panel button{padding:8px 12px;border:1px solid #1F4E79;background:#fff;color:#1F4E79;
+ border-radius:7px;font-weight:bold;cursor:pointer;font-size:14px;margin-top:6px}
+.panel button.on{background:#1F4E79;color:#fff}
+.panel button:active{opacity:.6}
+#readout{margin-top:7px;font-size:13px;color:#222;min-height:16px;line-height:1.35}
+#collapse{position:absolute;top:8px;right:8px}
+.hidden{display:none}
+.legend{position:absolute;bottom:14px;left:8px;z-index:1000;background:rgba(255,255,255,.94);
+ padding:7px 10px;border-radius:8px;box-shadow:0 1px 5px rgba(0,0,0,.3);font-size:11px;max-width:180px}
+.legend .bar{height:10px;border-radius:2px;margin:3px 0}
+.chlbar{background:linear-gradient(90deg,#08306b,#2171b5,#41ab5d,#d9f0a3,#fee08b,#f46d43)}
+.sstbar{background:linear-gradient(90deg,#3288bd,#66c2a5,#e6f598,#fee08b,#f46d43,#9e0142)}
+.leaflet-top.leaflet-right{margin-top:2px}
+.leaflet-control-layers{font-size:14px}
+.leaflet-control-layers-toggle{width:44px;height:44px}
+@media (max-width:520px){
+ .panel{font-size:14px;right:56px}
+ .leaflet-control-zoom{display:none}
+}
+</style></head><body>
+<div id="map"></div>
+<div id="status" style="position:absolute;bottom:0;left:0;right:0;z-index:3000;background:#0a7d33;color:#fff;padding:9px 12px;font-size:13px;text-align:center;line-height:1.35">Loading map&hellip;</div>
+
+<div class="panel" id="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <b>Montauk / Block Island Fishing</b>
+    <span id="collapseBtn" style="cursor:pointer;font-size:18px;color:#1F4E79;padding:0 4px">&#9776;</span>
+  </div>
+  <div id="panelBody">
+    <div class="row"><input type="text" id="q" list="spots" placeholder="&#128269; find a spot..."></div>
+    <div class="row"><input type="text" id="rt" list="spots" placeholder="&#128736; route from Coecles to..."></div>
+    <datalist id="spots"></datalist>
+    <div class="row">
+      Speed <input type="number" id="spd" value="30"> mph
+      &nbsp;Sat date <input type="date" id="satdate">
+    </div>
+    <div class="row">
+      <button id="chlBtn">Chlorophyll</button>
+      <button id="sstBtn">Water Temp</button>
+    </div>
+    <div class="row">
+      <button id="measureBtn">Measure: OFF</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+    <div id="readout">Tip: tap <b>Chlorophyll</b> to see plankton blooms &amp; color breaks where bait (and tuna) stack up.</div>
+  </div>
+</div>
+
+<div class="legend hidden" id="legend">
+  <div id="legTitle"><b>Chlorophyll-a</b></div>
+  <div class="bar chlbar" id="legBar"></div>
+  <div style="display:flex;justify-content:space-between"><span id="legLo">low</span><span id="legMid"></span><span id="legHi">high</span></div>
+  <div id="legTip" style="font-size:10px;color:#555"></div>
+</div>
+
+<script>
+window.__lastErr=null;window.onerror=function(m,s,l,c){window.__lastErr={msg:m,line:l,col:c};};
+var S=document.getElementById('status');
+function setStatus(msg,color){S.style.display='block';S.style.background=color||'#0a7d33';S.innerHTML=msg;}
+if(typeof L==='undefined'){
+  setStatus('&#9888; The map engine could not load. You are almost certainly viewing this inside an app preview that blocks the internet. <b>Download this file and open it in Safari or Chrome.</b>','#b00000');
+  throw new Error('Leaflet blocked');
+}
+var data = [{"n": "Acid Barge", "d": "", "lat": 41.036, "lon": -71.4498, "lo": "41-02.16 N / 71-26.99 W", "td": "14538.7 / 43820.2", "note": "", "g": "in"}, {"n": "Andrea Doria", "d": "", "lat": 40.4852, "lon": -69.8648, "lo": "40-29.11 N / 69-51.89 W", "td": "14094.0 / 43481.0", "note": "", "g": "in"}, {"n": "Aquarium 600 Square", "d": "216 ft", "lat": 40.5667, "lon": -71.435, "lo": "40-34.00 N / 71-26.100 W", "td": "14600.0 / 43600.0", "note": "", "g": "in"}, {"n": "Atlantis Canyon", "d": "", "lat": 40.0733, "lon": -70.194, "lo": "40-04.40 N / 70-11.64 W", "td": "14275.0 / 43321.0", "note": "", "g": "off"}, {"n": "East Atlantis Canyon", "d": "900 ft", "lat": 39.9583, "lon": -69.9167, "lo": "39-57.500 N / 69-55.000 W", "td": "", "note": "", "g": "off"}, {"n": "West Atlantis Canyon", "d": "675 ft", "lat": 40.075, "lon": -70.45, "lo": "40-04.500 N / 70-27.000 W", "td": "", "note": "", "g": "off"}, {"n": "Bacardi Wreck", "d": "180 ft", "lat": 39.8828, "lon": -72.6453, "lo": "39-52.969 N / 72-38.715 W", "td": "", "note": "", "g": "off"}, {"n": "Butter Fish Hole", "d": "180 ft", "lat": 40.8372, "lon": -71.6758, "lo": "40-50.230 N / 71-40.550 W", "td": "14725.0 / 43725.0", "note": "", "g": "in"}, {"n": "Butterfish Hole (2nd listing)", "d": "", "lat": 40.746, "lon": -70.996, "lo": "40-44.76 N / 70-59.76 W", "td": "14416.0 / 43255.0", "note": "", "g": "in"}, {"n": "Butter Fish Hole Outer", "d": "240 ft", "lat": 40.5583, "lon": -71.6083, "lo": "40-33.500 N / 71-36.50 W", "td": "", "note": "", "g": "in"}, {"n": "Cartwright", "d": "105 ft", "lat": 41.0, "lon": -71.8083, "lo": "41-00.000 N / 71-48.500 W", "td": "14655.0 / 43815.0", "note": "", "g": "in"}, {"n": "Cerberus Shoal #9", "d": "", "lat": 41.1733, "lon": -71.9525, "lo": "41-10.40 N / 71-57.15 W", "td": "26055.7 / 43919.7", "note": "Lon read as 71-57.15 (source ambiguous)", "g": "in"}, {"n": "CIA Grounds", "d": "", "lat": 40.9343, "lon": -71.7167, "lo": "40-56.06 N / 71-43.00 W", "td": "14637.9 / 43792.0", "note": "", "g": "in"}, {"n": "Coimbra Wreck", "d": "", "lat": 40.4013, "lon": -72.3387, "lo": "40-24.08 N / 72-20.32 W", "td": "1938.0 / 43576.0", "note": "", "g": "in"}, {"n": "Coxes Ledge", "d": "114 ft", "lat": 41.05, "lon": -71.1583, "lo": "41-03.000 N / 71-09.500 W", "td": "14422.4 / 43790.7", "note": "", "g": "in"}, {"n": "The Dip West of the Tails", "d": "480 ft", "lat": 39.9083, "lon": -71.725, "lo": "39-54.500 N / 71-43.500 W", "td": "", "note": "", "g": "off"}, {"n": "Dip NW Edge", "d": "500 ft", "lat": 39.9083, "lon": -71.7333, "lo": "39-54.50 N / 71-44.00 W", "td": "25900.0 / 43300.0", "note": "", "g": "off"}, {"n": "Dump, Center", "d": "", "lat": 40.7433, "lon": -70.8753, "lo": "40-44.60 N / 70-52.52 W", "td": "14375.0 / 43665.0", "note": "", "g": "in"}, {"n": "Dump, NE Side", "d": "", "lat": 40.8292, "lon": -70.752, "lo": "40-49.75 N / 70-45.12 W", "td": "14316.0 / 43675.0", "note": "", "g": "in"}, {"n": "Dump, NW Side", "d": "", "lat": 40.8253, "lon": -70.9988, "lo": "40-49.52 N / 70-59.93 W", "td": "14402.0 / 43690.0", "note": "Lat corrected from 40-19.52 (likely typo; fits other Dump corners)", "g": "in"}, {"n": "Dump, SE Side", "d": "", "lat": 40.6648, "lon": -70.7493, "lo": "40-39.89 N / 70-44.96 W", "td": "14347.0 / 43604.0", "note": "", "g": "in"}, {"n": "Dump, SW Side", "d": "", "lat": 40.6663, "lon": -70.9997, "lo": "40-39.98 N / 70-59.98 W", "td": "14432.0 / 43620.0", "note": "", "g": "in"}, {"n": "East Grounds", "d": "", "lat": 41.1652, "lon": -71.4568, "lo": "41-09.91 N / 71-27.41 W", "td": "14500.0 / 43874.0", "note": "", "g": "in"}, {"n": "E Tails Block Canyon", "d": "500 ft", "lat": 40.0298, "lon": -71.3217, "lo": "40-01.79 N / 71-19.30 W", "td": "14642.0 / 43342.0", "note": "", "g": "off"}, {"n": "Fairway Buoy off Block Island", "d": "108 ft", "lat": 41.1117, "lon": -71.39, "lo": "41-06.7000 N / 71-23.400 W", "td": "", "note": "", "g": "in"}, {"n": "Middle Grounds Between Dip and Tails", "d": "540 ft", "lat": 39.9247, "lon": -71.5329, "lo": "39-55.480 N / 71-31.975 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails North Flats", "d": "360 ft", "lat": 40.0619, "lon": -71.3554, "lo": "40-03.715 N / 71-21.322 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails Big Eye Mountain", "d": "590 ft", "lat": 39.9932, "lon": -71.3296, "lo": "39-59.590 N / 71-19.775 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails East Flats", "d": "525 ft", "lat": 40.0373, "lon": -71.2884, "lo": "40-02.235 N / 71-17.301 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails North East Corner", "d": "500 ft", "lat": 40.0306, "lon": -71.3207, "lo": "40-01.838 N / 71-19.240 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails North West Corner", "d": "600 ft", "lat": 40.0303, "lon": -71.3493, "lo": "40-01.815 N / 71-20.955 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails South East Corner", "d": "600 ft", "lat": 40.004, "lon": -71.3169, "lo": "40-00.237 N / 71-19.015 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails South West Corner", "d": "540 ft", "lat": 39.9986, "lon": -71.338, "lo": "39-59.915 N / 71-20.280 W", "td": "", "note": "", "g": "off"}, {"n": "Fish Tails West Flats", "d": "400 ft", "lat": 40.0144, "lon": -71.3942, "lo": "40-00.864 N / 71-23.654 W", "td": "", "note": "", "g": "off"}, {"n": "40 Fathom Bank South of Montauk", "d": "240 ft", "lat": 40.4467, "lon": -71.4792, "lo": "40-26.800 N / 71-28.750 W", "td": "", "note": "", "g": "in"}, {"n": "Gipper at East Side of Coxes Ledge", "d": "108 ft", "lat": 41.0833, "lon": -71.125, "lo": "41-05.00 N / 71-07.500 W", "td": "", "note": "", "g": "in"}, {"n": "Gully South of Fairway Buoy", "d": "186 ft", "lat": 41.045, "lon": -71.3825, "lo": "41-02.700 N / 71-22.950 W", "td": "14497.8 / 436813.7", "note": "TD#2 as printed (likely extra digit)", "g": "in"}, {"n": "Habbs Ledge West Side of Butterfish Hole", "d": "144 ft", "lat": 40.825, "lon": -71.8083, "lo": "40-49.498 N / 71-48.500 W", "td": "", "note": "", "g": "in"}, {"n": "Hooter Buoy", "d": "", "lat": 41.142, "lon": -71.6208, "lo": "41-08.52 N / 71-37.25 W", "td": "14565.0 / 43878.0", "note": "", "g": "in"}, {"n": "Hudson Canyon", "d": "", "lat": 39.676, "lon": -72.4798, "lo": "39-40.56 N / 72-28.79 W", "td": "15057.0 / 43197.0", "note": "", "g": "off"}, {"n": "Hudson Canyon Mouth (Canton)", "d": "288 ft", "lat": 39.6842, "lon": -72.4836, "lo": "39-41.049 N / 72-29.015 W", "td": "", "note": "", "g": "off"}, {"n": "Hudson Canyon Tip", "d": "600 ft", "lat": 39.6826, "lon": -72.4811, "lo": "39-40.956 N / 72-28.865 W", "td": "", "note": "", "g": "off"}, {"n": "Inner Cartwright", "d": "", "lat": 40.9962, "lon": -71.8333, "lo": "40-59.77 N / 71-50.00 W", "td": "14670.0 / 43830.0", "note": "", "g": "in"}, {"n": "Jennies Horn", "d": "210 ft", "lat": 40.8125, "lon": -71.5442, "lo": "40-48.750 N / 71-32.650 W", "td": "", "note": "", "g": "in"}, {"n": "Little Fish Tails North of Tails", "d": "265 ft", "lat": 40.3167, "lon": -71.5, "lo": "40-19.000 N / 71-30.000 W", "td": "", "note": "", "g": "off"}, {"n": "Midway Buoy", "d": "", "lat": 41.0958, "lon": -71.7675, "lo": "41-05.75 N / 71-46.05 W", "td": "14628.0 / 14628.0", "note": "", "g": "in"}, {"n": "Mountain East of Coxes", "d": "90 ft", "lat": 41.1375, "lon": -71.105, "lo": "41-08.250 N / 71-06.300 W", "td": "", "note": "Lon corrected from 74-06.300 (likely typo; 74W is inland NJ)", "g": "in"}, {"n": "Mud Hole", "d": "", "lat": 40.9373, "lon": -71.4173, "lo": "40-56.24 N / 71-25.04 W", "td": "14529.0 / 43770.0", "note": "", "g": "in"}, {"n": "North Grounds MTK", "d": "", "lat": 41.1555, "lon": -71.8022, "lo": "41-09.33 N / 71-48.13 W", "td": "14630.0 / 43900.0", "note": "", "g": "in"}, {"n": "Out Cartwright", "d": "", "lat": 40.9762, "lon": -71.824, "lo": "40-58.57 N / 71-49.44 W", "td": "14670.0 / 43820.0", "note": "", "g": "in"}, {"n": "Ranger Wreck", "d": "216 ft", "lat": 40.5883, "lon": -71.79, "lo": "40-35.300 N / 71-47.400 W", "td": "14719.6 / 43632.7", "note": "", "g": "in"}, {"n": "Ryan's Horn", "d": "210 ft", "lat": 40.7633, "lon": -71.45, "lo": "40-45.800 N / 71-27.000 W", "td": "", "note": "", "g": "in"}, {"n": "San Diego Wreck", "d": "", "lat": 40.5375, "lon": -73.0373, "lo": "40-32.25 N / 73-02.24 W", "td": "26543.3 / 43692.8", "note": "", "g": "in"}, {"n": "Shagwong Reef", "d": "", "lat": 41.1167, "lon": -71.915, "lo": "41-07.00 N / 71-54.90 W", "td": "26031.74 / 43892.45", "note": "", "g": "in"}, {"n": "Sharks Ledge", "d": "90-96 ft", "lat": 41.0667, "lon": -71.4731, "lo": "41-04.00 N / 71-28.385 W", "td": "", "note": "", "g": "in"}, {"n": "Spirit of 76 at West Side of Coxes", "d": "114 ft", "lat": 41.0885, "lon": -71.1712, "lo": "41-05.307 N / 71-10.269 W", "td": "", "note": "", "g": "in"}, {"n": "Sub Buoy", "d": "", "lat": 41.1123, "lon": -71.7163, "lo": "41-06.74 N / 71-42.98 W", "td": "14606.0 / 43873.0", "note": "", "g": "in"}, {"n": "Suffolk Wreck", "d": "190 ft", "lat": 40.88, "lon": -71.22, "lo": "40-52.80 N / 71-13.20 W", "td": "25647.8 / 43729.7", "note": "", "g": "in"}, {"n": "SW Ledge", "d": "", "lat": 41.1118, "lon": -71.672, "lo": "41-06.71 N / 71-40.32 W", "td": "25898.3 / 43867.1", "note": "", "g": "in"}, {"n": "Texas Tower", "d": "180 ft", "lat": 39.799, "lon": -72.6689, "lo": "39-47.941 N / 72-40.133 W", "td": "", "note": "", "g": "off"}, {"n": "Tuna Ridge South of Block", "d": "174 ft", "lat": 40.9167, "lon": -71.2792, "lo": "40-55.000 N / 71-16.750 W", "td": "", "note": "", "g": "in"}, {"n": "Veatch's Canyon", "d": "610 ft", "lat": 40.0, "lon": -69.6167, "lo": "40-00.000 N / 69-37.000 W", "td": "", "note": "", "g": "off"}, {"n": "W Tails Block Canyon", "d": "500 ft", "lat": 40.026, "lon": -71.3445, "lo": "40-01.56 N / 71-20.67 W", "td": "14650.0 / 43341.0", "note": "", "g": "off"}];
+var WPS = [{"n": "W1 Coecles Hbr", "lat": 41.078, "lon": -72.3}, {"n": "W2 Harbor exit", "lat": 41.073, "lon": -72.282}, {"n": "W3 Gardiners Bay", "lat": 41.069, "lon": -72.202}, {"n": "W4 Approaching Gardiners", "lat": 41.057, "lon": -72.141}, {"n": "W5 Turning south", "lat": 41.043, "lon": -72.135}, {"n": "W6 S. Gardiners gap", "lat": 41.029, "lon": -72.12}, {"n": "W7 Gap east", "lat": 41.032, "lon": -72.09}, {"n": "W8 Napeague Bay NE", "lat": 41.052, "lon": -72.058}, {"n": "W9 Off north shore", "lat": 41.092, "lon": -71.984}, {"n": "W10 Off Culloden Pt", "lat": 41.095, "lon": -71.94}, {"n": "W11 Off Shagwong/Mtk inlet", "lat": 41.089, "lon": -71.88}, {"n": "W12 Round Montauk Pt", "lat": 41.075, "lon": -71.835}];
+var launches = [
+ {n:"Coecles Harbor, Shelter Island", lat:41.0780, lon:-72.3000},
+ {n:"Montauk Point Light", lat:41.0708, lon:-71.8572}];
+
+var map = L.map('map', {zoomControl:true, tap:true});
+
+// ---- Base layers (OSM confirmed working; GEBCO bathymetry optional) ----
+var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+ {attribution:'&copy; OpenStreetMap', maxZoom:19});
+var esriOcean = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
+ {attribution:'Esri Ocean', maxNativeZoom:13, maxZoom:19});
+var baseOk=0, baseErr=0;
+osm.on('load', function(){});
+osm.on('tileload', function(){ baseOk++; if(baseOk===1) setStatus('&#9989; Chart loaded. Tap Chlorophyll or Water Temp for satellite layers.','#0a7d33'); setTimeout(function(){S.style.display='none';},3500); });
+osm.on('tileerror', function(){ baseErr++; if(baseOk===0 && baseErr>=3) setStatus('&#9888; Map tiles are blocked (no internet in this viewer). Spots and route still show. <b>Open in Safari/Chrome for the chart imagery.</b>','#b06000'); });
+osm.addTo(map);
+
+// ---- Satellite overlays via NASA GIBS (keyless, CORS-enabled) ----
+function gibs(layer, matrix, dateStr){
+  return L.tileLayer(
+    'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+layer+'/default/'+dateStr+
+    '/'+matrix+'/{z}/{y}/{x}.png',
+    {attribution:'NASA GIBS', maxNativeZoom:6, maxZoom:19, opacity:0.68, bounds:[[-85,-180],[85,180]]});
+}
+// MODIS Aqua was retired by NASA (its chlorophyll feed stopped publishing); NOAA-20 VIIRS is the live replacement
+var CHL_LAYER='VIIRS_NOAA20_Chlorophyll_a', SST_LAYER='GHRSST_L4_MUR_Sea_Surface_Temperature';
+var MATRIX='GoogleMapsCompatible_Level7';
+var chlLayer=null, sstLayer=null;
+
+function satDate(){
+  var v=document.getElementById('satdate').value;
+  return v || defaultDate();
+}
+function defaultDate(){
+  var d=new Date(); d.setDate(d.getDate()-2);
+  return d.toISOString().slice(0,10);
+}
+document.getElementById('satdate').value = defaultDate();
+
+function setLegend(kind){
+  var lg=document.getElementById('legend');
+  if(!kind){ lg.classList.add('hidden'); return; }
+  lg.classList.remove('hidden');
+  var bar=document.getElementById('legBar');
+  if(kind==='chl'){
+    document.getElementById('legTitle').innerHTML='<b>Chlorophyll-a</b> (bloom / bait)';
+    bar.className='bar chlbar';
+    document.getElementById('legLo').textContent='clear/blue';
+    document.getElementById('legMid').textContent='';
+    document.getElementById('legHi').textContent='green bloom';
+    document.getElementById('legTip').textContent='';
+  } else {
+    // NASA's SST color scale spans 0-32 C (32-90 F) end to end
+    document.getElementById('legTitle').innerHTML='<b>Sea Surface Temp</b>';
+    bar.className='bar sstbar';
+    document.getElementById('legLo').textContent='32°F';
+    document.getElementById('legMid').textContent='61°F';
+    document.getElementById('legHi').textContent='90°F';
+    document.getElementById('legTip').textContent='Tap the water for the exact temp';
+  }
+}
+
+function toggleOverlay(kind){
+  var btn=document.getElementById(kind==='chl'?'chlBtn':'sstBtn');
+  var other=kind==='chl'?'sst':'chl';
+  var otherBtn=document.getElementById(other==='chl'?'chlBtn':'sstBtn');
+  var cur=kind==='chl'?chlLayer:sstLayer;
+  // remove the other overlay for clarity
+  if(other==='chl'&&chlLayer){map.removeLayer(chlLayer);chlLayer=null;otherBtn.className='';}
+  if(other==='sst'&&sstLayer){map.removeLayer(sstLayer);sstLayer=null;otherBtn.className='';}
+  if(cur){
+    map.removeLayer(cur);
+    if(kind==='chl')chlLayer=null; else sstLayer=null;
+    btn.className=''; setLegend(null);
+    return;
+  }
+  var lyr=gibs(kind==='chl'?CHL_LAYER:SST_LAYER, MATRIX, satDate());
+  var okCount=0, errCount=0;
+  lyr.on('tileload',function(){okCount++;});
+  lyr.on('tileerror',function(){
+    errCount++;
+    if(okCount===0 && errCount>=3){
+      document.getElementById('readout').innerHTML=
+        '<i>No satellite data for '+satDate()+' (cloud cover or not published yet). Try a date 2-4 days back.</i>';
+    }
+  });
+  lyr.addTo(map);
+  if(kind==='chl')chlLayer=lyr; else sstLayer=lyr;
+  btn.className='on'; setLegend(kind);
+  document.getElementById('readout').innerHTML = (kind==='chl'
+    ? 'Chlorophyll on. Look for <b>color breaks</b> (green meeting blue) near your offshore spots. Change Sat date if patchy.'
+    : 'Water temp on. Hunt <b>temp breaks</b> where warm and cool water meet. <b>Tap the water</b> for the exact temp.');
+}
+document.getElementById('chlBtn').onclick=function(){toggleOverlay('chl');};
+document.getElementById('sstBtn').onclick=function(){toggleOverlay('sst');};
+document.getElementById('satdate').addEventListener('change',function(){
+  if(chlLayer){toggleOverlay('chl');toggleOverlay('chl');}
+  if(sstLayer){toggleOverlay('sst');toggleOverlay('sst');}
+});
+
+// ---- Spots ----
+var inshore=L.layerGroup(), offshore=L.layerGroup(), bounds=[], markerByName={};
+function addPt(p,color,grp){
+  var m=L.circleMarker([p.lat,p.lon],{radius:6,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95});
+  var pop='<b>'+p.n+'</b><br>'+(p.lo||'')+'<br>'+p.lat.toFixed(4)+', '+p.lon.toFixed(4);
+  if(p.d)pop+='<br>Depth: '+p.d;
+  if(p.td)pop+='<br>Loran TDs: '+p.td;
+  if(p.note)pop+='<br><i>'+p.note+'</i>';
+  m.bindPopup(pop);
+  m.bindTooltip(p.n,{permanent:true,direction:'right',offset:[8,0],className:'lbl'});
+  grp.addLayer(m); markerByName[p.n]=m; bounds.push([p.lat,p.lon]);
+}
+data.forEach(function(p){addPt(p,p.g==='in'?'#1f6fd6':'#d63a2f',p.g==='in'?inshore:offshore);});
+launches.forEach(function(p){addPt(p,'#1a9c40',inshore);});
+inshore.addTo(map); offshore.addTo(map);
+map.fitBounds(bounds,{padding:[30,30]});
+
+// ---- helpers ----
+function nmDist(a,b){var R=3440.065,r=Math.PI/180;
+  var x=Math.sin(a.lat*r)*Math.sin(b.lat*r)+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lng-a.lng)*r);
+  return R*Math.acos(Math.min(1,x));}
+function bearing(a,b){var r=Math.PI/180;
+  var y=Math.sin((b.lng-a.lng)*r)*Math.cos(b.lat*r);
+  var x=Math.cos(a.lat*r)*Math.sin(b.lat*r)-Math.sin(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lng-a.lng)*r);
+  return (Math.atan2(y,x)/r+360)%360;}
+
+// ---- range rings ----
+function ringGroup(lat,lon){var g=L.layerGroup();
+  [10,20,30,40].forEach(function(nm){
+    L.circle([lat,lon],{radius:nm*1852,color:'#b8860b',weight:1.2,fill:false,dashArray:'6 6'}).addTo(g);
+    L.marker([lat+nm/60,lon],{icon:L.divIcon({className:'ringlbl',html:nm+' NM'})}).addTo(g);});
+  return g;}
+var ringsC=ringGroup(41.0780,-72.3000), ringsM=ringGroup(41.0708,-71.8572);
+
+// ---- Coecles corridor ----
+var corridor=L.layerGroup();
+WPS.forEach(function(w){L.circleMarker([w.lat,w.lon],{radius:4,color:'#fff',weight:1,fillColor:'#7a4b00',fillOpacity:1})
+  .bindTooltip(w.n,{direction:'top',className:'lbl'}).addTo(corridor);});
+L.polyline(WPS.map(function(w){return [w.lat,w.lon];}),{color:'#7a4b00',weight:2.5,dashArray:'4 6'}).addTo(corridor);
+corridor.addTo(map);
+
+var routeLayer=L.layerGroup().addTo(map);
+function routeFromCoecles(name){
+  var m=markerByName[name]; if(!m)return;
+  routeLayer.clearLayers();
+  var dest=m.getLatLng();
+  var exitIdx=dest.lat>=41.04?10:11;
+  var path=WPS.slice(0,exitIdx+1).map(function(w){return L.latLng(w.lat,w.lon);});
+  path.push(dest);
+  var total=0; for(var i=1;i<path.length;i++)total+=nmDist(path[i-1],path[i]);
+  L.polyline(path,{color:'#0a7d33',weight:4,opacity:.85}).addTo(routeLayer);
+  path.forEach(function(p){L.circleMarker(p,{radius:3,color:'#0a7d33',fillColor:'#fff',fillOpacity:1,weight:2}).addTo(routeLayer);});
+  var spd=parseFloat(document.getElementById('spd').value)||30;
+  var hrs=total*1.15078/spd,h=Math.floor(hrs),mn=Math.round((hrs-h)*60);
+  var via=exitIdx===10?'via S. Gardiners (no pt rounding)':'via S. Gardiners, around Montauk Pt';
+  document.getElementById('readout').innerHTML=
+    '<b>Coecles &rarr; '+name+'</b><br>'+total.toFixed(1)+' NM ('+(total*1.15078).toFixed(1)+' mi) &nbsp; '+via+'<br>~'+h+'h '+mn+'m at '+spd+' mph';
+  map.fitBounds(L.latLngBounds(path),{padding:[45,45]});
+}
+document.getElementById('rt').addEventListener('change',function(){routeFromCoecles(this.value);});
+
+// ---- search ----
+var dl=document.getElementById('spots');
+Object.keys(markerByName).sort().forEach(function(n){var o=document.createElement('option');o.value=n;dl.appendChild(o);});
+document.getElementById('q').addEventListener('change',function(){
+  var m=markerByName[this.value]; if(m){map.setView(m.getLatLng(),11);m.openPopup();}});
+
+// ---- measure ----
+var measuring=false,mPts=[],mLayer=L.layerGroup().addTo(map);
+var mBtn=document.getElementById('measureBtn');
+mBtn.onclick=function(){measuring=!measuring;mBtn.textContent='Measure: '+(measuring?'ON':'OFF');
+  mBtn.className=measuring?'on':'';
+  if(measuring)document.getElementById('readout').textContent='Tap two points on the water.';};
+document.getElementById('clearBtn').onclick=function(){
+  mPts=[];mLayer.clearLayers();routeLayer.clearLayers();
+  document.getElementById('readout').textContent='Cleared.';};
+map.on('click',function(e){
+  if(!measuring)return;
+  if(mPts.length>=2){mPts=[];mLayer.clearLayers();}
+  mPts.push(e.latlng);
+  L.circleMarker(e.latlng,{radius:5,color:'#ff8c00',fillColor:'#ff8c00',fillOpacity:1}).addTo(mLayer);
+  if(mPts.length===1){document.getElementById('readout').textContent='Tap second point...';}
+  else{
+    var d=nmDist(mPts[0],mPts[1]),brg=bearing(mPts[0],mPts[1]);
+    var spd=parseFloat(document.getElementById('spd').value)||30,hrs=d*1.15078/spd;
+    var h=Math.floor(hrs),mn=Math.round((hrs-h)*60);
+    L.polyline(mPts,{color:'#ff8c00',weight:3,dashArray:'8 6'}).addTo(mLayer);
+    document.getElementById('readout').innerHTML=
+      '<b>'+d.toFixed(1)+' NM ('+(d*1.15078).toFixed(1)+' mi)</b> &nbsp; brg '+
+      Math.round(brg).toString().padStart(3,'0')+'&deg;T &nbsp; ~'+h+'h '+mn+'m at '+spd+' mph';
+  }});
+
+// ---- tap for water temp (NOAA ERDDAP, same MUR dataset as the temp overlay) ----
+var tempPop=L.popup({maxWidth:220});
+map.on('click',function(e){
+  if(measuring)return;
+  // ignore taps on spot markers, route lines, and rings (they are SVG paths)
+  if(e.originalEvent && e.originalEvent.target && e.originalEvent.target.tagName==='path')return;
+  var lat=e.latlng.lat, lon=e.latlng.lng;
+  if(lat<32||lat>46||lon<-78||lon>-63)return; // only our corner of the Atlantic
+  tempPop.setLatLng(e.latlng).setContent('Reading water temp...').openOn(map);
+  var d=satDate();
+  var url='https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst%5B('+
+    d+'T09:00:00Z)%5D%5B('+lat.toFixed(3)+')%5D%5B('+lon.toFixed(3)+')%5D';
+  fetch(url).then(function(r){
+    if(!r.ok)throw new Error('no data');
+    return r.json();
+  }).then(function(j){
+    var c=j.table.rows[0][3];
+    if(c===null||isNaN(c)){tempPop.setContent('No water temp here (that spot is on land).');return;}
+    var f=c*9/5+32;
+    tempPop.setContent('<b style="font-size:16px">'+f.toFixed(1)+'&deg;F</b> ('+c.toFixed(1)+'&deg;C)'+
+      '<br><span style="font-size:11px;color:#555">surface temp for '+d+'<br>'+
+      lat.toFixed(3)+', '+Math.abs(lon).toFixed(3)+' W</span>');
+  }).catch(function(){
+    tempPop.setContent('No temp published for '+d+' yet. Roll the Sat date back a day or two.');
+  });
+});
+
+// ---- layers control + labels + collapse ----
+L.control.layers(
+ {'OpenStreetMap':osm,'Esri Ocean basemap':esriOcean},
+ {'Inshore spots (blue)':inshore,'Offshore spots (red)':offshore,
+  'Range rings: Coecles':ringsC,'Range rings: Montauk':ringsM,'Coecles route corridor':corridor}
+).addTo(map);
+
+function toggleLabels(){var show=map.getZoom()>=9;
+  document.querySelectorAll('.lbl').forEach(function(el){el.style.display=show?'':'none';});}
+map.on('zoomend',toggleLabels); toggleLabels();
+
+var collapsed=false;
+document.getElementById('collapseBtn').onclick=function(){
+  collapsed=!collapsed;
+  document.getElementById('panelBody').style.display=collapsed?'none':'';
+};
+</script></body></html>
