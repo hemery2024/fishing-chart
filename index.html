@@ -124,6 +124,10 @@ function defaultDate(){
   var d=new Date(); d.setDate(d.getDate()-2);
   return d.toISOString().slice(0,10);
 }
+function dayBefore(dateStr){
+  var d=new Date(dateStr+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()-1);
+  return d.toISOString().slice(0,10);
+}
 document.getElementById('satdate').value = defaultDate();
 
 function setLegend(kind){
@@ -164,12 +168,18 @@ function toggleOverlay(kind){
     return;
   }
   // Chlorophyll stacks three satellites (PACE, NOAA-21, NOAA-20) so one fills
-  // the swath gaps and cloud holes of the others on any given day
-  var subs = kind==='chl'
-    ? [gibs('OCI_PACE_Chlorophyll_a', MATRIX, satDate()),
-       gibs('VIIRS_NOAA21_Chlorophyll_a', MATRIX, satDate()),
-       gibs(CHL_LAYER, MATRIX, satDate())]
-    : [gibs(SST_LAYER, MATRIX, satDate())];
+  // the swath gaps and cloud holes of the others, and draws the previous day
+  // underneath as a fallback where clouds beat all three on the selected day
+  var CHL_SATS=['OCI_PACE_Chlorophyll_a','VIIRS_NOAA21_Chlorophyll_a',CHL_LAYER];
+  var subs;
+  if(kind==='chl'){
+    subs=[];
+    [dayBefore(satDate()), satDate()].forEach(function(d){
+      CHL_SATS.forEach(function(sat){ subs.push(gibs(sat, MATRIX, d)); });
+    });
+  } else {
+    subs=[gibs(SST_LAYER, MATRIX, satDate())];
+  }
   var lyr=L.layerGroup(subs);
   var okCount=0, errCount=0;
   subs.forEach(function(s){
@@ -289,7 +299,17 @@ map.on('click',function(e){
   }});
 
 // ---- tap for water temp (NOAA ERDDAP, same MUR dataset as the temp overlay) ----
-var tempPop=L.popup({maxWidth:220});
+// NOAA's server doesn't send CORS headers, so this uses JSONP (script tag) instead of fetch
+var tempPop=L.popup({maxWidth:220}), tempSeq=0;
+function fetchTemp(lat,lon,d,onOk,onErr){
+  var cb='__tempCb'+(++tempSeq), s=document.createElement('script'), done=false;
+  window[cb]=function(j){done=true; delete window[cb]; s.remove(); onOk(j);};
+  s.onerror=function(){delete window[cb]; s.remove(); onErr();};
+  setTimeout(function(){if(!done && window[cb]){delete window[cb]; s.remove(); onErr();}},12000);
+  s.src='https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst%5B('+
+    d+'T09:00:00Z)%5D%5B('+lat.toFixed(3)+')%5D%5B('+lon.toFixed(3)+')%5D&.jsonp='+cb;
+  document.body.appendChild(s);
+}
 map.on('click',function(e){
   if(measuring)return;
   // ignore taps on spot markers, route lines, and rings (they are SVG paths)
@@ -298,19 +318,14 @@ map.on('click',function(e){
   if(lat<32||lat>46||lon<-78||lon>-63)return; // only our corner of the Atlantic
   tempPop.setLatLng(e.latlng).setContent('Reading water temp...').openOn(map);
   var d=satDate();
-  var url='https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst%5B('+
-    d+'T09:00:00Z)%5D%5B('+lat.toFixed(3)+')%5D%5B('+lon.toFixed(3)+')%5D';
-  fetch(url).then(function(r){
-    if(!r.ok)throw new Error('no data');
-    return r.json();
-  }).then(function(j){
+  fetchTemp(lat,lon,d,function(j){
     var c=j.table.rows[0][3];
     if(c===null||isNaN(c)){tempPop.setContent('No water temp here (that spot is on land).');return;}
     var f=c*9/5+32;
     tempPop.setContent('<b style="font-size:16px">'+f.toFixed(1)+'&deg;F</b> ('+c.toFixed(1)+'&deg;C)'+
       '<br><span style="font-size:11px;color:#555">surface temp for '+d+'<br>'+
       lat.toFixed(3)+', '+Math.abs(lon).toFixed(3)+' W</span>');
-  }).catch(function(){
+  },function(){
     tempPop.setContent('No temp published for '+d+' yet. Roll the Sat date back a day or two.');
   });
 });
