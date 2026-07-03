@@ -41,7 +41,7 @@ W12 Round Montauk Pt 41.0750, -71.8350
 - Spots are split into two groups: inshore / Block Island (blue) and offshore / canyons (red).
 
 ## Satellite overlays (NASA GIBS)
-- Chlorophyll layer: VIIRS_NOAA20_Chlorophyll_a. (Was MODIS_Aqua_Chlorophyll_A, but NASA retired the MODIS Aqua satellite and its feed stopped publishing, so it was swapped July 2026.) Temp layer: GHRSST_L4_MUR_Sea_Surface_Temperature. Tile matrix GoogleMapsCompatible_Level7 (coarse, a few km per pixel, good for spotting breaks, not fine detail).
+- Chlorophyll is a stack of three satellite layers shown together so swath gaps and cloud holes in one are filled by the others: OCI_PACE_Chlorophyll_a, VIIRS_NOAA21_Chlorophyll_a, VIIRS_NOAA20_Chlorophyll_a. (Originally a single MODIS_Aqua_Chlorophyll_A layer, but NASA retired MODIS Aqua and its feed stopped publishing, so it was replaced July 2026.) Temp layer: GHRSST_L4_MUR_Sea_Surface_Temperature. Tile matrix GoogleMapsCompatible_Level7 (coarse, a few km per pixel, good for spotting breaks, not fine detail).
 - The temp legend is labeled in degrees F using NASA's fixed color scale, which spans 0 to 32 C (32 to 90 F) end to end.
 - Tap-for-temp: tapping open water (with Measure off) queries NOAA ERDDAP (coastwatch.pfeg.noaa.gov, dataset jplMURSST41, the same MUR dataset as the overlay) for the exact surface temp at that point on the selected Sat date, shown in a popup in F and C. Taps on markers, lines, and land are ignored or answered with a friendly message.
 - These are for finding color and temperature breaks where bait and tuna hold, especially near the offshore spots.

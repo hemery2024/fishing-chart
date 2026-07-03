@@ -163,15 +163,24 @@ function toggleOverlay(kind){
     btn.className=''; setLegend(null);
     return;
   }
-  var lyr=gibs(kind==='chl'?CHL_LAYER:SST_LAYER, MATRIX, satDate());
+  // Chlorophyll stacks three satellites (PACE, NOAA-21, NOAA-20) so one fills
+  // the swath gaps and cloud holes of the others on any given day
+  var subs = kind==='chl'
+    ? [gibs('OCI_PACE_Chlorophyll_a', MATRIX, satDate()),
+       gibs('VIIRS_NOAA21_Chlorophyll_a', MATRIX, satDate()),
+       gibs(CHL_LAYER, MATRIX, satDate())]
+    : [gibs(SST_LAYER, MATRIX, satDate())];
+  var lyr=L.layerGroup(subs);
   var okCount=0, errCount=0;
-  lyr.on('tileload',function(){okCount++;});
-  lyr.on('tileerror',function(){
-    errCount++;
-    if(okCount===0 && errCount>=3){
-      document.getElementById('readout').innerHTML=
-        '<i>No satellite data for '+satDate()+' (cloud cover or not published yet). Try a date 2-4 days back.</i>';
-    }
+  subs.forEach(function(s){
+    s.on('tileload',function(){okCount++;});
+    s.on('tileerror',function(){
+      errCount++;
+      if(okCount===0 && errCount>=subs.length*3){
+        document.getElementById('readout').innerHTML=
+          '<i>No satellite data for '+satDate()+' (cloud cover or not published yet). Try a date 2-4 days back.</i>';
+      }
+    });
   });
   lyr.addTo(map);
   if(kind==='chl')chlLayer=lyr; else sstLayer=lyr;
