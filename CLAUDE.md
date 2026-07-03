@@ -57,6 +57,12 @@ W12 Round Montauk Pt 41.0750, -71.8350
 - A status bar at the bottom that reports whether the map engine and tiles loaded, so failures are visible instead of blank.
 - iOS web app meta tags so Add to Home Screen launches full screen.
 
+## Custom spots and calculator (added July 2026)
+- "+ Spot" button: tap the chart, name it (and optional depth), and it becomes a purple marker. Custom spots join the search list, the route box, and the calculator. Popup has rename and delete links.
+- Custom spots persist in localStorage per phone. The app also tries to sync them through a shared JSON bin (extendsclass.com bin fbacbcc) but that service rejects browser writes (its CORS preflight returns 500), so cross-phone sync is NOT working yet. The plan is to swap the BIN constant to a Firebase Realtime Database URL once the owner does the one-time Google setup. The pull/push/self-heal logic is already written to survive an empty or lost bin (local copy re-uploads).
+- Distance calculator panel (from the owner's Excel workbook): pick any two spots or launches, get NM, statute miles, direct true bearing, and run time at the panel cruise speed. If either end is Coecles Harbor the distance follows the 12 waypoint corridor, same as the route box. Draws a dashed purple line on the chart.
+- The Excel workbook also has a 6 waypoint corridor version on its Ref sheet. The app keeps the more detailed 12 waypoint corridor for both the route box and the calculator.
+
 ## Ideas for future work (ask before big changes)
 - A multi stop trip planner (click spots in order for total mileage and time).
 - Tag spots with typical tuna season notes.

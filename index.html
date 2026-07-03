@@ -65,7 +65,14 @@ html,body{margin:0;height:100%;font-family:-apple-system,Arial,sans-serif;-webki
     <div class="row">
       <button id="measureBtn">Measure: OFF</button>
       <button id="clearBtn">Clear</button>
+      <button id="addSpotBtn">+ Spot</button>
     </div>
+    <details id="calcBox" style="margin-top:6px">
+      <summary style="cursor:pointer;font-weight:bold;color:#1F4E79">Distance calculator</summary>
+      <div class="row" style="margin-top:5px"><input type="text" id="calcA" list="spots" placeholder="From (any spot or launch)..."></div>
+      <div class="row"><input type="text" id="calcB" list="spots" placeholder="To..."></div>
+      <div id="calcOut" style="font-size:13px;margin-top:4px"></div>
+    </details>
     <div id="readout">Tip: tap <b>Chlorophyll</b> to see plankton blooms &amp; color breaks where bait (and tuna) stack up.</div>
   </div>
 </div>
@@ -280,7 +287,9 @@ mBtn.onclick=function(){measuring=!measuring;mBtn.textContent='Measure: '+(measu
   mBtn.className=measuring?'on':'';
   if(measuring)document.getElementById('readout').textContent='Tap two points on the water.';};
 document.getElementById('clearBtn').onclick=function(){
-  mPts=[];mLayer.clearLayers();routeLayer.clearLayers();
+  mPts=[];mLayer.clearLayers();routeLayer.clearLayers();calcLayer.clearLayers();
+  document.getElementById('calcA').value='';document.getElementById('calcB').value='';
+  document.getElementById('calcOut').innerHTML='';
   document.getElementById('readout').textContent='Cleared.';};
 map.on('click',function(e){
   if(!measuring)return;
@@ -311,7 +320,7 @@ function fetchTemp(lat,lon,d,onOk,onErr){
   document.body.appendChild(s);
 }
 map.on('click',function(e){
-  if(measuring)return;
+  if(measuring||addingSpot)return;
   // ignore taps on spot markers, route lines, and rings (they are SVG paths)
   if(e.originalEvent && e.originalEvent.target && e.originalEvent.target.tagName==='path')return;
   var lat=e.latlng.lat, lon=e.latlng.lng;
@@ -330,10 +339,119 @@ map.on('click',function(e){
   });
 });
 
+// ---- shared custom spots (everyone with the app sees the same edits) ----
+// Stored in a free JSON bin; also cached in localStorage so a bin outage
+// cannot lose the spots (the app re-uploads its local copy if the bin is empty)
+var BIN='https://extendsclass.com/api/json-storage/bin/fbacbcc';
+var customSpots=[], customLayer=L.layerGroup().addTo(map), addingSpot=false;
+function lsGet(){try{return JSON.parse(localStorage.getItem('customSpots'))||[];}catch(e){return [];}}
+function lsSet(a){try{localStorage.setItem('customSpots',JSON.stringify(a));}catch(e){}}
+function rebuildDatalist(){
+  dl.innerHTML='';
+  Object.keys(markerByName).sort().forEach(function(n){var o=document.createElement('option');o.value=n;dl.appendChild(o);});
+}
+function renderCustom(){
+  customLayer.clearLayers();
+  Object.keys(markerByName).forEach(function(k){if(markerByName[k].__custom)delete markerByName[k];});
+  customSpots.forEach(function(p){
+    var m=L.circleMarker([p.lat,p.lon],{radius:6,color:'#fff',weight:1.5,fillColor:'#8e44ad',fillOpacity:.95});
+    m.bindPopup('<b>'+p.n+'</b><br>'+p.lat.toFixed(4)+', '+p.lon.toFixed(4)+
+      (p.d?'<br>Depth: '+p.d:'')+
+      '<br><a href="#" onclick="renameSpot(\''+p.id+'\');return false">rename</a> &nbsp; <a href="#" onclick="deleteSpot(\''+p.id+'\');return false">delete</a>');
+    m.bindTooltip(p.n,{permanent:true,direction:'right',offset:[8,0],className:'lbl'});
+    m.__custom=true;
+    customLayer.addLayer(m); markerByName[p.n]=m;
+  });
+  rebuildDatalist();
+  toggleLabels();
+}
+function pullSpots(then){
+  fetch(BIN).then(function(r){return r.json();}).then(function(j){
+    var remote=(j&&j.customSpots)||[], local=lsGet();
+    if(remote.length===0&&local.length>0){customSpots=local;pushSpots(true);}
+    else customSpots=remote;
+    lsSet(customSpots); renderCustom(); if(then)then();
+  }).catch(function(){customSpots=lsGet();renderCustom();if(then)then();});
+}
+function pushSpots(quiet){
+  lsSet(customSpots);
+  fetch(BIN,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({customSpots:customSpots,updated:new Date().toISOString()})})
+    .catch(function(){if(!quiet)document.getElementById('readout').innerHTML=
+      '<i>Saved on this phone. Sharing to other phones is not connected yet.</i>';});
+}
+document.getElementById('addSpotBtn').onclick=function(){
+  addingSpot=!addingSpot;
+  this.className=addingSpot?'on':'';
+  document.getElementById('readout').innerHTML=addingSpot
+    ? 'Tap the chart where the new spot goes.' : 'Add spot cancelled.';
+};
+map.on('click',function(e){
+  if(!addingSpot)return;
+  addingSpot=false; document.getElementById('addSpotBtn').className='';
+  var name=(prompt('Name this spot:')||'').replace(/[<>"'&]/g,'').trim();
+  if(!name){document.getElementById('readout').textContent='No name given, spot not added.';return;}
+  if(markerByName[name]){alert('There is already a spot named '+name);return;}
+  var depth=(prompt('Depth (optional, e.g. 120 ft):')||'').replace(/[<>"'&]/g,'').trim();
+  var p={id:String(Date.now()),n:name,lat:e.latlng.lat,lon:e.latlng.lng,d:depth};
+  pullSpots(function(){
+    customSpots.push(p); pushSpots(); renderCustom();
+    document.getElementById('readout').innerHTML='<b>'+name+'</b> added. It shows on every phone using this chart.';
+  });
+});
+window.deleteSpot=function(id){
+  var s=customSpots.filter(function(x){return x.id===id;})[0];
+  if(!s||!confirm('Delete '+s.n+' from every chart?'))return;
+  pullSpots(function(){
+    customSpots=customSpots.filter(function(x){return x.id!==id;});
+    pushSpots(); renderCustom(); map.closePopup();
+  });
+};
+window.renameSpot=function(id){
+  var s=customSpots.filter(function(x){return x.id===id;})[0]; if(!s)return;
+  var nn=(prompt('New name:',s.n)||'').replace(/[<>"'&]/g,'').trim(); if(!nn)return;
+  pullSpots(function(){
+    var t=customSpots.filter(function(x){return x.id===id;})[0];
+    if(t)t.n=nn;
+    pushSpots(); renderCustom(); map.closePopup();
+  });
+};
+// pick up buddy edits whenever the app comes back to the foreground
+document.addEventListener('visibilitychange',function(){if(!document.hidden)pullSpots();});
+
+// ---- distance calculator (from the Excel workbook; Coecles legs use the corridor) ----
+var calcLayer=L.layerGroup().addTo(map);
+function coeclesNM(dest){
+  var exitIdx=dest.lat>=41.04?10:11;
+  var path=WPS.slice(0,exitIdx+1).map(function(w){return L.latLng(w.lat,w.lon);});
+  path.push(dest);
+  var t=0; for(var i=1;i<path.length;i++)t+=nmDist(path[i-1],path[i]);
+  return {nm:t, path:path, via:exitIdx===10?'via S. Gardiners (no pt rounding)':'via S. Gardiners, around Montauk Pt'};
+}
+function calcUpdate(){
+  var an=document.getElementById('calcA').value, bn=document.getElementById('calcB').value;
+  var A=markerByName[an], B=markerByName[bn], out=document.getElementById('calcOut');
+  calcLayer.clearLayers();
+  if(!A||!B){out.innerHTML=(an||bn)?'<i>Pick both spots from the list.</i>':'';return;}
+  var a=A.getLatLng(), b=B.getLatLng(), COE='Coecles Harbor, Shelter Island';
+  var nm, via='direct', path=[a,b];
+  if(an===COE){var r=coeclesNM(b); nm=r.nm; via=r.via; path=r.path;}
+  else if(bn===COE){var r2=coeclesNM(a); nm=r2.nm; via=r2.via; path=r2.path.slice().reverse();}
+  else nm=nmDist(a,b);
+  var brg=bearing(a,b), spd=parseFloat(document.getElementById('spd').value)||30;
+  var hrs=nm*1.15078/spd, h=Math.floor(hrs), mn=Math.round((hrs-h)*60);
+  L.polyline(path,{color:'#8e44ad',weight:3,dashArray:'2 7'}).addTo(calcLayer);
+  out.innerHTML='<b>'+nm.toFixed(1)+' NM ('+(nm*1.15078).toFixed(1)+' mi)</b> '+via+
+    '<br>brg '+Math.round(brg).toString().padStart(3,'0')+'&deg;T (direct) &nbsp; ~'+h+'h '+mn+'m at '+spd+' mph';
+}
+['calcA','calcB','spd'].forEach(function(id){
+  document.getElementById(id).addEventListener('change',calcUpdate);
+});
+
 // ---- layers control + labels + collapse ----
 L.control.layers(
  {'OpenStreetMap':osm,'Esri Ocean basemap':esriOcean},
- {'Inshore spots (blue)':inshore,'Offshore spots (red)':offshore,
+ {'Inshore spots (blue)':inshore,'Offshore spots (red)':offshore,'Our spots (purple)':customLayer,
   'Range rings: Coecles':ringsC,'Range rings: Montauk':ringsM,'Coecles route corridor':corridor}
 ).addTo(map);
 
@@ -346,4 +464,7 @@ document.getElementById('collapseBtn').onclick=function(){
   collapsed=!collapsed;
   document.getElementById('panelBody').style.display=collapsed?'none':'';
 };
+
+// load the shared custom spots on startup
+pullSpots();
 </script></body></html>
