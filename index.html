@@ -60,6 +60,7 @@ html,body{margin:0;height:100%;font-family:-apple-system,Arial,sans-serif;-webki
     <div class="row">
       <button id="chlBtn">Chlorophyll</button>
       <button id="sstBtn">Water Temp</button>
+      <button id="frontsBtn">Fronts</button>
     </div>
     <div class="row">
       <button id="measureBtn">Measure: OFF</button>
@@ -104,6 +105,12 @@ var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
  {attribution:'&copy; OpenStreetMap', maxZoom:19});
 var esriOcean = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
  {attribution:'Esri Ocean', maxNativeZoom:13, maxZoom:19});
+// real NOAA electronic nautical chart (soundings, contours, buoys)
+var encChart = L.tileLayer.wms('https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/ENCOnline/MapServer/exts/MaritimeChartService/WMSServer',
+ {layers:'0,1,2,3,4,5,6,7', format:'image/png', attribution:'NOAA ENC', maxZoom:19});
+// GEBCO shaded bathymetry (shows the shelf break and canyon shapes)
+var gebco = L.tileLayer.wms('https://wms.gebco.net/mapserv',
+ {layers:'GEBCO_LATEST', format:'image/png', attribution:'GEBCO', maxZoom:19});
 var baseOk=0, baseErr=0;
 osm.on('load', function(){});
 osm.on('tileload', function(){ baseOk++; if(baseOk===1) setStatus('&#9989; Chart loaded. Tap Chlorophyll or Water Temp for satellite layers.','#0a7d33'); setTimeout(function(){S.style.display='none';},3500); });
@@ -119,6 +126,7 @@ function gibs(layer, matrix, dateStr){
 }
 // MODIS Aqua was retired by NASA (its chlorophyll feed stopped publishing); NOAA-20 VIIRS is the live replacement
 var CHL_LAYER='VIIRS_NOAA20_Chlorophyll_a', SST_LAYER='GHRSST_L4_MUR_Sea_Surface_Temperature';
+var CHL_SATS=['OCI_PACE_Chlorophyll_a','VIIRS_NOAA21_Chlorophyll_a',CHL_LAYER];
 var MATRIX='GoogleMapsCompatible_Level7';
 var chlLayer=null, sstLayer=null;
 
@@ -135,6 +143,22 @@ function dayBefore(dateStr){
   return d.toISOString().slice(0,10);
 }
 document.getElementById('satdate').value = defaultDate();
+// satellites publish 1-4 days behind; probe for the newest date with real data
+// so the overlays never come up blank just because the default date is too fresh
+(function findFreshDate(){
+  var tries=[];
+  for(var i=1;i<=6;i++){var d=new Date();d.setDate(d.getDate()-i);tries.push(d.toISOString().slice(0,10));}
+  function probe(idx){
+    if(idx>=tries.length)return;
+    fetch('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+SST_LAYER+'/default/'+tries[idx]+'/'+MATRIX+'/6/24/19.png')
+      .then(function(r){return r.ok?r.blob():null;})
+      .then(function(b){
+        if(b&&b.size>1500)document.getElementById('satdate').value=tries[idx];
+        else probe(idx+1);
+      }).catch(function(){probe(idx+1);});
+  }
+  probe(0);
+})();
 
 function setLegend(kind){
   var lg=document.getElementById('legend');
@@ -176,7 +200,6 @@ function toggleOverlay(kind){
   // Chlorophyll stacks three satellites (PACE, NOAA-21, NOAA-20) so one fills
   // the swath gaps and cloud holes of the others, and draws the previous day
   // underneath as a fallback where clouds beat all three on the selected day
-  var CHL_SATS=['OCI_PACE_Chlorophyll_a','VIIRS_NOAA21_Chlorophyll_a',CHL_LAYER];
   var subs;
   if(kind==='chl'){
     subs=[];
@@ -431,9 +454,160 @@ function calcUpdate(zoom){
 });
 document.getElementById('spd').addEventListener('change',function(){calcUpdate(false);});
 
+// ---- automatic front detection ----
+// Runs edge detection on the same NASA imagery the overlays show: sharp color
+// change in the SST layer = temp break, in the chlorophyll stack = color break,
+// both together = the prime edge. Computed for the current view on demand.
+var frontsOverlay=null, frontsBusy=false;
+function tileRange(z){
+  var b=map.getBounds();
+  function t(lat,lon){
+    var n=Math.pow(2,z), x=Math.floor((lon+180)/360*n);
+    var la=lat*Math.PI/180;
+    var y=Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n);
+    return [Math.max(0,Math.min(n-1,x)),Math.max(0,Math.min(n-1,y))];
+  }
+  var a=t(b.getNorth(),b.getWest()), c=t(b.getSouth(),b.getEast());
+  return {x0:a[0],y0:a[1],x1:c[0],y1:c[1],z:z};
+}
+function tileRangeBounds(r){
+  function lat(y,z){var n=Math.PI-2*Math.PI*y/Math.pow(2,z);return 180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));}
+  function lon(x,z){return x/Math.pow(2,z)*360-180;}
+  return L.latLngBounds([lat(r.y1+1,r.z),lon(r.x0,r.z)],[lat(r.y0,r.z),lon(r.x1+1,r.z)]);
+}
+function loadMosaic(specs,r,cb){
+  var w=(r.x1-r.x0+1)*256, h=(r.y1-r.y0+1)*256;
+  if(w>4096||h>4096){cb(null);return;}
+  var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  var ctx=cv.getContext('2d',{willReadFrequently:true});
+  var pending=0, anyLoaded=false;
+  // draw layer by layer in order so later specs paint over earlier ones,
+  // matching what the map shows on screen
+  function drawSpec(si){
+    if(si>=specs.length){cb(anyLoaded?cv:null);return;}
+    var spec=specs[si];
+    pending=0;
+    var done=function(){pending--;if(pending===0)drawSpec(si+1);};
+    for(var x=r.x0;x<=r.x1;x++)for(var y=r.y0;y<=r.y1;y++)pending++;
+    var count=pending;
+    if(count===0){drawSpec(si+1);return;}
+    for(var xx=r.x0;xx<=r.x1;xx++)for(var yy=r.y0;yy<=r.y1;yy++){
+      (function(x,y){
+        var img=new Image(); img.crossOrigin='anonymous';
+        img.onload=function(){ctx.drawImage(img,(x-r.x0)*256,(y-r.y0)*256);anyLoaded=true;done();};
+        img.onerror=function(){done();};
+        img.src='https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+spec.layer+'/default/'+spec.date+'/'+MATRIX+'/'+r.z+'/'+y+'/'+x+'.png';
+      })(xx,yy);
+    }
+  }
+  drawSpec(0);
+}
+function edgeMap(cv,thresh,smooth){
+  var w=cv.width,h=cv.height;
+  var d=cv.getContext('2d').getImageData(0,0,w,h).data;
+  if(smooth){
+    // 3x3 box blur (alpha-aware) to knock the speckle out of chlorophyll imagery
+    var sm=new Uint8ClampedArray(d.length);
+    for(var y=0;y<h;y++)for(var x=0;x<w;x++){
+      var i=(y*w+x)*4;
+      if(d[i+3]<200){sm[i+3]=d[i+3];continue;}
+      var r=0,g=0,b=0,n=0;
+      for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){
+        var yy=y+dy,xx=x+dx;
+        if(yy<0||yy>=h||xx<0||xx>=w)continue;
+        var j=(yy*w+xx)*4;
+        if(d[j+3]<200)continue;
+        r+=d[j];g+=d[j+1];b+=d[j+2];n++;
+      }
+      sm[i]=r/n;sm[i+1]=g/n;sm[i+2]=b/n;sm[i+3]=255;
+    }
+    d=sm;
+  }
+  var raw=new Uint8Array(w*h);
+  for(var y2=1;y2<h-1;y2++)for(var x2=1;x2<w-1;x2++){
+    var i2=(y2*w+x2)*4;
+    if(d[i2+3]<200)continue;                       // no data here
+    var ir=(y2*w+x2+1)*4, idn=((y2+1)*w+x2)*4;
+    if(d[ir+3]<200||d[idn+3]<200)continue;         // no gradient across data edges (clouds)
+    var gx=Math.abs(d[i2]-d[ir])+Math.abs(d[i2+1]-d[ir+1])+Math.abs(d[i2+2]-d[ir+2]);
+    var gy=Math.abs(d[i2]-d[idn])+Math.abs(d[i2+1]-d[idn+1])+Math.abs(d[i2+2]-d[idn+2]);
+    if(gx+gy>thresh)raw[y2*w+x2]=1;
+  }
+  // despeckle: keep an edge pixel only if at least 2 of its 8 neighbors are edges,
+  // so isolated noise drops out and real front lines stay connected
+  var out=new Uint8Array(w*h);
+  for(var y3=1;y3<h-1;y3++)for(var x3=1;x3<w-1;x3++){
+    var i3=y3*w+x3;
+    if(!raw[i3])continue;
+    var nb=raw[i3-1]+raw[i3+1]+raw[i3-w]+raw[i3+w]+raw[i3-w-1]+raw[i3-w+1]+raw[i3+w-1]+raw[i3+w+1];
+    if(nb>=2)out[i3]=1;
+  }
+  return out;
+}
+function detectFronts(cb){
+  var r=tileRange(Math.min(map.getZoom(),6));
+  var d=satDate(), dp=dayBefore(d);
+  var sstSpec=[{layer:SST_LAYER,date:d}];
+  var chlSpec=[];
+  [dp,d].forEach(function(dd){CHL_SATS.forEach(function(s){chlSpec.push({layer:s,date:dd});});});
+  loadMosaic(sstSpec,r,function(sstCv){
+    loadMosaic(chlSpec,r,function(chlCv){
+      if(!sstCv&&!chlCv){cb(false);return;}
+      var w=(sstCv||chlCv).width, h=(sstCv||chlCv).height;
+      var se,ce;
+      try{
+        se=sstCv?edgeMap(sstCv,35,false):new Uint8Array(w*h);
+        ce=chlCv?edgeMap(chlCv,60,true):new Uint8Array(w*h);
+      }catch(err){cb(false);return;}
+      // dilate the chl edges by 2 px so "both" means a color break within ~1 km of a temp break
+      var ced=new Uint8Array(w*h);
+      for(var yd=2;yd<h-2;yd++)for(var xd=2;xd<w-2;xd++){
+        if(!ce[yd*w+xd])continue;
+        for(var q=-2;q<=2;q++)for(var u=-2;u<=2;u++)ced[(yd+q)*w+(xd+u)]=1;
+      }
+      var out=document.createElement('canvas'); out.width=w; out.height=h;
+      var octx=out.getContext('2d');
+      var od=octx.createImageData(w,h), p=od.data;
+      for(var y=1;y<h-1;y++)for(var x=1;x<w-1;x++){
+        var i=y*w+x;
+        var s=se[i], c=ce[i];
+        if(!s&&!c)continue;
+        var o=i*4;
+        if(s&&ced[i]){p[o]=196;p[o+1]=0;p[o+2]=196;}      // purple: temp + color together
+        else if(s){p[o]=230;p[o+1]=48;p[o+2]=0;}          // red: temp break
+        else{p[o]=10;p[o+1]=138;p[o+2]=31;}               // green: color break
+        p[o+3]=235;
+      }
+      octx.putImageData(od,0,0);
+      if(frontsOverlay)map.removeLayer(frontsOverlay);
+      frontsOverlay=L.imageOverlay(out.toDataURL(),tileRangeBounds(r),{opacity:.9,interactive:false});
+      frontsOverlay.addTo(map);
+      cb(true);
+    });
+  });
+}
+document.getElementById('frontsBtn').onclick=function(){
+  var btn=this;
+  if(frontsOverlay){map.removeLayer(frontsOverlay);frontsOverlay=null;btn.className='';return;}
+  if(frontsBusy)return;
+  frontsBusy=true; btn.className='on';
+  document.getElementById('readout').innerHTML='Scanning the satellite imagery for breaks...';
+  detectFronts(function(ok){
+    frontsBusy=false;
+    if(!ok){
+      btn.className='';
+      document.getElementById('readout').innerHTML='<i>Could not read the satellite imagery here. Zoom to your water and try again, or roll the Sat date back.</i>';
+      return;
+    }
+    document.getElementById('readout').innerHTML='<b>Fronts:</b> <span style="color:#e63000">red = temp break</span>, '+
+      '<span style="color:#0a8a1f">green = color break</span>, <span style="color:#c400c4">purple = both (prime water)</span>. '+
+      'After moving the chart, tap Fronts twice to rescan.';
+  });
+};
+
 // ---- layers control + labels + collapse ----
 L.control.layers(
- {'OpenStreetMap':osm,'Esri Ocean basemap':esriOcean},
+ {'OpenStreetMap':osm,'NOAA Nautical Chart (depths)':encChart,'GEBCO bathymetry':gebco,'Esri Ocean basemap':esriOcean},
  {'Inshore spots (blue)':inshore,'Offshore spots (red)':offshore,'Our spots (purple)':customLayer,
   'Range rings: Coecles':ringsC,'Range rings: Montauk':ringsM,'Coecles route corridor':corridor}
 ).addTo(map);

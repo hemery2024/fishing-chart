@@ -57,6 +57,11 @@ W12 Round Montauk Pt 41.0750, -71.8350
 - A status bar at the bottom that reports whether the map engine and tiles loaded, so failures are visible instead of blank.
 - iOS web app meta tags so Add to Home Screen launches full screen.
 
+## Bathymetry and fronts (added July 2026)
+- Base map choices now include the real NOAA electronic nautical chart (WMS at gis.charttools.noaa.gov, MCS/ENCOnline, layers 0-7) with soundings and contours, and GEBCO shaded bathymetry (wms.gebco.net) which shows the shelf break and canyons. Both are WMS layers, not tile pyramids.
+- Fronts button: client side edge detection on the GIBS imagery itself (canvas, crossOrigin anonymous, GIBS sends CORS). SST mosaic threshold 35 no blur; chlorophyll stack mosaic gets a 3x3 alpha-aware box blur then threshold 60; both edge maps are despeckled (keep pixel only with 2+ of 8 neighbors). Red = temp break, green = color break, purple = both within 2 px (~1 km at z6). Rendered as an L.imageOverlay for the current view at min(zoom,6); user rescans manually after panning. Gradients are never computed across transparent (no data) pixels so cloud boundaries do not read as fronts.
+- Sat date now auto-detects: on load the app probes GIBS for the newest date with a published SST tile (up to 6 days back) and sets the date picker. This fixed the recurring "overlays are blank" complaint which was publish lag, not an outage.
+
 ## Custom spots and calculator (added July 2026)
 - "+ Spot" button: tap the chart, name it (and optional depth), and it becomes a purple marker. Custom spots join the search list, the route box, and the calculator. Popup has rename and delete links.
 - Custom spots persist in localStorage per phone. The app also tries to sync them through a shared JSON bin (extendsclass.com bin fbacbcc) but that service rejects browser writes (its CORS preflight returns 500), so cross-phone sync is NOT working yet. The plan is to swap the BIN constant to a Firebase Realtime Database URL once the owner does the one-time Google setup. The pull/push/self-heal logic is already written to survive an empty or lost bin (local copy re-uploads).
