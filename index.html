@@ -122,7 +122,7 @@ function gibs(layer, matrix, dateStr){
   return L.tileLayer(
     'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+layer+'/default/'+dateStr+
     '/'+matrix+'/{z}/{y}/{x}.png',
-    {attribution:'NASA GIBS', maxNativeZoom:6, maxZoom:19, opacity:0.68, bounds:[[-85,-180],[85,180]]});
+    {attribution:'NASA GIBS', maxNativeZoom:7, maxZoom:19, opacity:0.68, bounds:[[-85,-180],[85,180]]});
 }
 // MODIS Aqua was retired by NASA (its chlorophyll feed stopped publishing); NOAA-20 VIIRS is the live replacement
 var CHL_LAYER='VIIRS_NOAA20_Chlorophyll_a', SST_LAYER='GHRSST_L4_MUR_Sea_Surface_Temperature';
@@ -506,13 +506,13 @@ function edgeMap(cv,thresh,smooth){
   var w=cv.width,h=cv.height;
   var d=cv.getContext('2d').getImageData(0,0,w,h).data;
   if(smooth){
-    // 3x3 box blur (alpha-aware) to knock the speckle out of chlorophyll imagery
+    // 5x5 box blur (alpha-aware) to knock the speckle out of chlorophyll imagery
     var sm=new Uint8ClampedArray(d.length);
     for(var y=0;y<h;y++)for(var x=0;x<w;x++){
       var i=(y*w+x)*4;
       if(d[i+3]<200){sm[i+3]=d[i+3];continue;}
       var r=0,g=0,b=0,n=0;
-      for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){
+      for(var dy=-2;dy<=2;dy++)for(var dx=-2;dx<=2;dx++){
         var yy=y+dy,xx=x+dx;
         if(yy<0||yy>=h||xx<0||xx>=w)continue;
         var j=(yy*w+xx)*4;
@@ -523,11 +523,13 @@ function edgeMap(cv,thresh,smooth){
     }
     d=sm;
   }
-  var raw=new Uint8Array(w*h);
-  for(var y2=1;y2<h-1;y2++)for(var x2=1;x2<w-1;x2++){
+  // gradient measured across a 2 px step, which at z7 is the same physical
+  // distance the old z6 single-pixel step covered, so thresholds carry over
+  var ST=2, raw=new Uint8Array(w*h);
+  for(var y2=ST;y2<h-ST;y2++)for(var x2=ST;x2<w-ST;x2++){
     var i2=(y2*w+x2)*4;
     if(d[i2+3]<200)continue;                       // no data here
-    var ir=(y2*w+x2+1)*4, idn=((y2+1)*w+x2)*4;
+    var ir=(y2*w+x2+ST)*4, idn=((y2+ST)*w+x2)*4;
     if(d[ir+3]<200||d[idn+3]<200)continue;         // no gradient across data edges (clouds)
     var gx=Math.abs(d[i2]-d[ir])+Math.abs(d[i2+1]-d[ir+1])+Math.abs(d[i2+2]-d[ir+2]);
     var gy=Math.abs(d[i2]-d[idn])+Math.abs(d[i2+1]-d[idn+1])+Math.abs(d[i2+2]-d[idn+2]);
@@ -545,7 +547,8 @@ function edgeMap(cv,thresh,smooth){
   return out;
 }
 function detectFronts(cb){
-  var r=tileRange(Math.min(map.getZoom(),6));
+  // always work at z7, the imagery's full native resolution (~1 km pixels)
+  var r=tileRange(7);
   var d=satDate(), dp=dayBefore(d);
   var sstSpec=[{layer:SST_LAYER,date:d}];
   var chlSpec=[];
