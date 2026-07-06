@@ -123,13 +123,44 @@ osm.addTo(map);
 // is faded over the base map instead
 var chlPane=map.createPane('chlpane');
 chlPane.style.opacity=0.68; chlPane.style.zIndex=250;
+function gibsUrl(layer, matrix, dateStr){
+  return 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+layer+'/default/'+dateStr+
+    '/'+matrix+'/{z}/{y}/{x}.png';
+}
+// the chlorophyll palette's bottom "purple" bins mean near-zero chlorophyll,
+// which never really occurs here; satellites emit them as bad-retrieval noise
+function isBogusChl(r,g,b){return r>90&&b>90&&g<70;}
+// canvas tile layer that drops those bogus purple pixels before display
+var FilteredChlTiles=L.GridLayer.extend({
+  initialize:function(url,opts){L.GridLayer.prototype.initialize.call(this,opts);this._url=url;},
+  createTile:function(coords,done){
+    var tile=document.createElement('canvas'); tile.width=tile.height=256;
+    var ctx=tile.getContext('2d');
+    var img=new Image(); img.crossOrigin='anonymous';
+    img.onload=function(){
+      ctx.drawImage(img,0,0);
+      try{
+        var id=ctx.getImageData(0,0,256,256), d=id.data;
+        for(var i=0;i<d.length;i+=4){
+          if(d[i+3]>0&&isBogusChl(d[i],d[i+1],d[i+2]))d[i+3]=0;
+        }
+        ctx.putImageData(id,0,0);
+      }catch(e){}
+      done(null,tile);
+    };
+    img.onerror=function(){done(null,tile);};
+    img.src=L.Util.template(this._url,coords);
+    return tile;
+  }
+});
 function gibs(layer, matrix, dateStr, pane){
   var opts={attribution:'NASA GIBS', maxNativeZoom:7, maxZoom:19, bounds:[[-85,-180],[85,180]]};
-  if(pane){opts.pane=pane; opts.opacity=1;}
-  else opts.opacity=0.68;
-  return L.tileLayer(
-    'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+layer+'/default/'+dateStr+
-    '/'+matrix+'/{z}/{y}/{x}.png', opts);
+  if(pane){
+    opts.pane=pane; opts.opacity=1;
+    return new FilteredChlTiles(gibsUrl(layer,matrix,dateStr), opts);
+  }
+  opts.opacity=0.68;
+  return L.tileLayer(gibsUrl(layer,matrix,dateStr), opts);
 }
 // MODIS Aqua was retired by NASA (its chlorophyll feed stopped publishing); NOAA-20 VIIRS is the live replacement
 var CHL_LAYER='VIIRS_NOAA20_Chlorophyll_a', SST_LAYER='GHRSST_L4_MUR_Sea_Surface_Temperature';
@@ -513,7 +544,11 @@ function edgeMap(cv,thresh,smooth){
   var w=cv.width,h=cv.height;
   var d=cv.getContext('2d').getImageData(0,0,w,h).data;
   if(smooth){
-    // 5x5 box blur (alpha-aware) to knock the speckle out of chlorophyll imagery
+    // chlorophyll path: first drop the bogus purple noise pixels (see isBogusChl)
+    for(var pz=0;pz<d.length;pz+=4){
+      if(d[pz+3]>0&&isBogusChl(d[pz],d[pz+1],d[pz+2]))d[pz+3]=0;
+    }
+    // then a 5x5 box blur (alpha-aware) to knock the speckle out of the imagery
     var sm=new Uint8ClampedArray(d.length);
     for(var y=0;y<h;y++)for(var x=0;x<w;x++){
       var i=(y*w+x)*4;
