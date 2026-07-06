@@ -137,11 +137,21 @@ function filterChlImage(id,w,h){
     if(d[i+3]>0&&isBogusChl(d[i],d[i+1],d[i+2]))d[i+3]=0;
   }
   // a real satellite pass covers contiguous water; a bad retrieval is a tiny
-  // island of data on its own. Drop opaque patches smaller than MIN pixels
-  // (about 60 sq km at z7) and let the layers underneath show through.
-  var MIN=200;
+  // island of data on its own. Drop opaque patches smaller than MIN pixels,
+  // and if a tile is under 10% covered the whole pass there is junk quality,
+  // so drop all of it. The layers underneath show through either way.
+  var MIN=800;
   for(var by=0;by<h;by+=256)for(var bx=0;bx<w;bx+=256){
     var bw=Math.min(256,w-bx), bh=Math.min(256,h-by);
+    var tot=0;
+    for(var cy=by;cy<by+bh;cy++)for(var cx=bx;cx<bx+bw;cx++){
+      if(d[(cy*w+cx)*4+3]>0)tot++;
+    }
+    if(tot===0)continue;
+    if(tot<0.10*bw*bh){
+      for(var zy=by;zy<by+bh;zy++)for(var zx=bx;zx<bx+bw;zx++)d[(zy*w+zx)*4+3]=0;
+      continue;
+    }
     var n=bw*bh, lab=new Int32Array(n), stack=[], comp=0;
     for(var p=0;p<n;p++){
       if(lab[p])continue;
