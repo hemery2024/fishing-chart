@@ -118,11 +118,18 @@ osm.on('tileerror', function(){ baseErr++; if(baseOk===0 && baseErr>=3) setStatu
 osm.addTo(map);
 
 // ---- Satellite overlays via NASA GIBS (keyless, CORS-enabled) ----
-function gibs(layer, matrix, dateStr){
+// The chlorophyll stack renders into its own pane at full opacity (so overlapping
+// satellites/days don't blend into false colors like purple); the pane as a whole
+// is faded over the base map instead
+var chlPane=map.createPane('chlpane');
+chlPane.style.opacity=0.68; chlPane.style.zIndex=250;
+function gibs(layer, matrix, dateStr, pane){
+  var opts={attribution:'NASA GIBS', maxNativeZoom:7, maxZoom:19, bounds:[[-85,-180],[85,180]]};
+  if(pane){opts.pane=pane; opts.opacity=1;}
+  else opts.opacity=0.68;
   return L.tileLayer(
     'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/'+layer+'/default/'+dateStr+
-    '/'+matrix+'/{z}/{y}/{x}.png',
-    {attribution:'NASA GIBS', maxNativeZoom:7, maxZoom:19, opacity:0.68, bounds:[[-85,-180],[85,180]]});
+    '/'+matrix+'/{z}/{y}/{x}.png', opts);
 }
 // MODIS Aqua was retired by NASA (its chlorophyll feed stopped publishing); NOAA-20 VIIRS is the live replacement
 var CHL_LAYER='VIIRS_NOAA20_Chlorophyll_a', SST_LAYER='GHRSST_L4_MUR_Sea_Surface_Temperature';
@@ -204,7 +211,7 @@ function toggleOverlay(kind){
   if(kind==='chl'){
     subs=[];
     [dayBefore(satDate()), satDate()].forEach(function(d){
-      CHL_SATS.forEach(function(sat){ subs.push(gibs(sat, MATRIX, d)); });
+      CHL_SATS.forEach(function(sat){ subs.push(gibs(sat, MATRIX, d, 'chlpane')); });
     });
   } else {
     subs=[gibs(SST_LAYER, MATRIX, satDate())];
