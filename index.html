@@ -130,7 +130,48 @@ function gibsUrl(layer, matrix, dateStr){
 // the chlorophyll palette's bottom "purple" bins mean near-zero chlorophyll,
 // which never really occurs here; satellites emit them as bad-retrieval noise
 function isBogusChl(r,g,b){return r>90&&b>90&&g<70;}
-// canvas tile layer that drops those bogus purple pixels before display
+function filterChlImage(id,w,h){
+  var d=id.data;
+  // purple bins are never legitimate here: drop unconditionally
+  for(var i=0;i<d.length;i+=4){
+    if(d[i+3]>0&&isBogusChl(d[i],d[i+1],d[i+2]))d[i+3]=0;
+  }
+  // a real satellite pass covers contiguous water; a bad retrieval is a tiny
+  // island of data on its own. Drop opaque patches smaller than MIN pixels
+  // (about 60 sq km at z7) and let the layers underneath show through.
+  var MIN=200;
+  for(var by=0;by<h;by+=256)for(var bx=0;bx<w;bx+=256){
+    var bw=Math.min(256,w-bx), bh=Math.min(256,h-by);
+    var n=bw*bh, lab=new Int32Array(n), stack=[], comp=0;
+    for(var p=0;p<n;p++){
+      if(lab[p])continue;
+      var px=bx+(p%bw), py=by+((p/bw)|0);
+      if(d[(py*w+px)*4+3]===0)continue;
+      comp++; lab[p]=comp;
+      var members=[p]; stack.push(p);
+      while(stack.length){
+        var q=stack.pop(), qx=q%bw, qy=(q/bw)|0, nb=[];
+        if(qx>0)nb.push(q-1); if(qx<bw-1)nb.push(q+1);
+        if(qy>0)nb.push(q-bw); if(qy<bh-1)nb.push(q+bw);
+        for(var t=0;t<nb.length;t++){
+          var r=nb[t];
+          if(lab[r])continue;
+          var rx=bx+(r%bw), ry=by+((r/bw)|0);
+          if(d[(ry*w+rx)*4+3]===0)continue;
+          lab[r]=comp; members.push(r); stack.push(r);
+        }
+      }
+      if(members.length<MIN){
+        for(var m=0;m<members.length;m++){
+          var mx=bx+(members[m]%bw), my=by+((members[m]/bw)|0);
+          d[(my*w+mx)*4+3]=0;
+        }
+      }
+    }
+  }
+  return id;
+}
+// canvas tile layer that runs the noise filter before display
 var FilteredChlTiles=L.GridLayer.extend({
   initialize:function(url,opts){L.GridLayer.prototype.initialize.call(this,opts);this._url=url;},
   createTile:function(coords,done){
@@ -140,11 +181,7 @@ var FilteredChlTiles=L.GridLayer.extend({
     img.onload=function(){
       ctx.drawImage(img,0,0);
       try{
-        var id=ctx.getImageData(0,0,256,256), d=id.data;
-        for(var i=0;i<d.length;i+=4){
-          if(d[i+3]>0&&isBogusChl(d[i],d[i+1],d[i+2]))d[i+3]=0;
-        }
-        ctx.putImageData(id,0,0);
+        ctx.putImageData(filterChlImage(ctx.getImageData(0,0,256,256),256,256),0,0);
       }catch(e){}
       done(null,tile);
     };
@@ -544,11 +581,7 @@ function edgeMap(cv,thresh,smooth){
   var w=cv.width,h=cv.height;
   var d=cv.getContext('2d').getImageData(0,0,w,h).data;
   if(smooth){
-    // chlorophyll path: first drop the bogus purple noise pixels (see isBogusChl)
-    for(var pz=0;pz<d.length;pz+=4){
-      if(d[pz+3]>0&&isBogusChl(d[pz],d[pz+1],d[pz+2]))d[pz+3]=0;
-    }
-    // then a 5x5 box blur (alpha-aware) to knock the speckle out of the imagery
+    // 5x5 box blur (alpha-aware) to knock the speckle out of chlorophyll imagery
     var sm=new Uint8ClampedArray(d.length);
     for(var y=0;y<h;y++)for(var x=0;x<w;x++){
       var i=(y*w+x)*4;
@@ -601,6 +634,12 @@ function detectFronts(cb){
       var w=(sstCv||chlCv).width, h=(sstCv||chlCv).height;
       var se,ce;
       try{
+        if(chlCv){
+          // run the same noise filter the display uses, so bad pixels
+          // cannot produce fake front lines
+          var cctx=chlCv.getContext('2d');
+          cctx.putImageData(filterChlImage(cctx.getImageData(0,0,w,h),w,h),0,0);
+        }
         se=sstCv?edgeMap(sstCv,35,false):new Uint8Array(w*h);
         ce=chlCv?edgeMap(chlCv,60,true):new Uint8Array(w*h);
       }catch(err){cb(false);return;}
